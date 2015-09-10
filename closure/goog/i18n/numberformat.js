@@ -86,8 +86,8 @@ goog.i18n.NumberFormat = function(pattern, opt_currency, opt_currencyStyle) {
   // The multiplier for use in percent, per mille, etc.
   /** @private {number} */
   this.multiplier_ = 1;
-  /** @private {number} */
-  this.groupingSize_ = 3;
+  /** @private {Array} */
+  this.groupingArray_ = [];
   /** @private {boolean} */
   this.decimalSeparatorAlwaysShown_ = false;
   /** @private {boolean} */
@@ -261,7 +261,7 @@ goog.i18n.NumberFormat.prototype.setShowTrailingZeros =
 goog.i18n.NumberFormat.prototype.setBaseFormatting =
     function(baseFormattingNumber) {
   goog.asserts.assert(goog.isNull(baseFormattingNumber) ||
-      isFinite(baseFormattingNumber));
+          isFinite(baseFormattingNumber));
   this.baseFormattingNumber_ = baseFormattingNumber;
   return this;
 };
@@ -462,9 +462,9 @@ goog.i18n.NumberFormat.prototype.parseNumber_ = function(text, pos) {
       normalizedText += '.';
       sawDecimal = true;
     } else if (ch == grouping.charAt(0) &&
-               ('\u00a0' != grouping.charAt(0) ||
-                pos[0] + 1 < text.length &&
-                this.getDigit_(text.charAt(pos[0] + 1)) >= 0)) {
+        ('\u00a0' != grouping.charAt(0) ||
+        pos[0] + 1 < text.length &&
+        this.getDigit_(text.charAt(pos[0] + 1)) >= 0)) {
       // Got a grouping character here. When grouping character is nbsp, need
       // to make sure the character following it is a digit.
       if (sawDecimal || sawExponent) {
@@ -589,8 +589,8 @@ goog.i18n.NumberFormat.prototype.roundNumber_ = function(number) {
  *     This function will add its formatted pieces to the array.
  * @private
  */
-goog.i18n.NumberFormat.prototype.subformatFixed_ =
-    function(number, minIntDigits, parts) {
+goog.i18n.NumberFormat.prototype.subformatFixed_ = function(
+    number, minIntDigits, parts) {
   if (this.minimumFractionDigits_ > this.maximumFractionDigits_) {
     throw Error('Min value must be less than max value');
   }
@@ -624,22 +624,104 @@ goog.i18n.NumberFormat.prototype.subformatFixed_ =
   var decimal = goog.i18n.NumberFormatSymbols.DECIMAL_SEP;
   var grouping = goog.i18n.NumberFormatSymbols.GROUP_SEP;
   var zeroCode = goog.i18n.NumberFormat.enforceAsciiDigits_ ?
-                 48  /* ascii '0' */ :
-                 goog.i18n.NumberFormatSymbols.ZERO_DIGIT.charCodeAt(0);
+      48  /* ascii '0' */ :
+      goog.i18n.NumberFormatSymbols.ZERO_DIGIT.charCodeAt(0);
   var digitLen = intPart.length;
+  var nonRepeatedGroupCount = 0;
+  // Keep track of how much has been completed on the non repeated groups
+  var nonRepeatedGroupCompleteCount = 0;
+  var currentGroupSizeIndex = 0;
+  var currentGroupSize = 0;
 
   if (intValue > 0 || minIntDigits > 0) {
     for (var i = digitLen; i < minIntDigits; i++) {
       parts.push(String.fromCharCode(zeroCode));
     }
 
-    for (var i = 0; i < digitLen; i++) {
-      parts.push(String.fromCharCode(zeroCode + intPart.charAt(i) * 1));
-
-      if (digitLen - i > 1 && this.groupingSize_ > 0 &&
-          ((digitLen - i) % this.groupingSize_ == 1)) {
-        parts.push(grouping);
+    // If there's more than 1 number grouping,
+    // figure out the length of the non-repeated groupings (on the right)
+    if (this.groupingArray_.length >= 2) {
+      for (var j = 1; j < this.groupingArray_.length; j++) {
+        nonRepeatedGroupCount += this.groupingArray_[j];
       }
+    }
+
+    // Anything left of the fixed number grouping is repeated,
+    // figure out the length of repeated groupings (on the left)
+    var repeatedDigitLen = digitLen - nonRepeatedGroupCount;
+    if (repeatedDigitLen > 0) {
+      // There are repeating digits and non-repeating digits
+      for (var i = 0; i < digitLen; i++) {
+        parts.push(String.fromCharCode(zeroCode + intPart.charAt(i) * 1));
+        if (digitLen - i > 1) {
+          currentGroupSize = this.groupingArray_[currentGroupSizeIndex];
+          if (i < repeatedDigitLen) {
+            // Process the left side (the repeated number groups)
+            var repeatedDigitIndex = repeatedDigitLen - i;
+            // Edge case if there's a number grouping asking for "1" group at
+            // a time; otherwise, if the remainder is 1, there's the separator
+            if (currentGroupSize === 1 ||
+                (currentGroupSize > 0 &&
+                (repeatedDigitIndex % currentGroupSize) === 1)
+            ) {
+              parts.push(grouping);
+            }
+          } else {
+            // Process the right side (the non-repeated fixed number groups)
+            if (currentGroupSizeIndex < this.groupingArray_.length) {
+              if (i === repeatedDigitLen) {
+                // Increase the group index because a separator
+                // has previously added in the earlier logic
+                currentGroupSizeIndex += 1;
+              } else {
+                // Otherwise, just iterate to the right side and
+                // add a separator once the length matches to the expected
+                if (currentGroupSize ===
+                    i - repeatedDigitLen - nonRepeatedGroupCompleteCount + 1) {
+                  parts.push(grouping);
+                  // Keep track of what has been completed on the right
+                  nonRepeatedGroupCompleteCount += currentGroupSize;
+                  currentGroupSizeIndex += 1; // Get to the next number grouping
+                }
+              }
+            }
+          }
+        }
+      }
+    } else {
+      // There are no repeating digits and only non-repeating digits
+      var digitLenLeft = digitLen;
+      var rightToLeftParts = [];
+      // Start from the right most non-repeating group and work inwards
+      for (
+          currentGroupSizeIndex = this.groupingArray_.length - 1;
+          currentGroupSizeIndex >= 0 && digitLenLeft > 0;
+          currentGroupSizeIndex--) {
+        currentGroupSize = this.groupingArray_[currentGroupSizeIndex];
+        // Iterate from the right most digit
+        for (var rightDigitIndex = 0;
+             rightDigitIndex < currentGroupSize && (
+             (digitLenLeft - rightDigitIndex - 1) >= 0
+             );
+             rightDigitIndex++) {
+          rightToLeftParts.push(
+              String.fromCharCode(
+                  zeroCode + intPart.charAt(
+                      digitLenLeft - rightDigitIndex - 1
+                  ) * 1
+              )
+          );
+        }
+        // Update the number of digits left
+        digitLenLeft -= currentGroupSize;
+        if (digitLenLeft > 0) {
+          rightToLeftParts.push(grouping);
+        }
+      }
+      // Reverse and push onto the remaining parts
+      rightToLeftParts.reverse().forEach(function(item) {
+        parts.push(item);
+      });
     }
   } else if (!fractionPresent) {
     // If there is no fraction present, and we haven't printed any
@@ -685,7 +767,7 @@ goog.i18n.NumberFormat.prototype.addExponentPart_ = function(exponent, parts) {
 
   var exponentDigits = '' + exponent;
   var zeroChar = goog.i18n.NumberFormat.enforceAsciiDigits_ ? '0' :
-                 goog.i18n.NumberFormatSymbols.ZERO_DIGIT;
+      goog.i18n.NumberFormatSymbols.ZERO_DIGIT;
   for (var i = exponentDigits.length; i < this.minExponentDigits_; i++) {
     parts.push(zeroChar);
   }
@@ -961,7 +1043,6 @@ goog.i18n.NumberFormat.prototype.parseTrunk_ = function(pattern, pos) {
   var zeroDigitCount = 0;
   var digitRightCount = 0;
   var groupingCount = -1;
-
   var len = pattern.length;
   for (var loop = true; pos[0] < len && loop; pos[0]++) {
     var ch = pattern.charAt(pos[0]);
@@ -986,19 +1067,22 @@ goog.i18n.NumberFormat.prototype.parseTrunk_ = function(pattern, pos) {
         }
         break;
       case goog.i18n.NumberFormat.PATTERN_GROUPING_SEPARATOR_:
+        if (groupingCount > 0) {
+          this.groupingArray_[this.groupingArray_.length] = groupingCount;
+        }
         groupingCount = 0;
         break;
       case goog.i18n.NumberFormat.PATTERN_DECIMAL_SEPARATOR_:
         if (decimalPos >= 0) {
           throw Error('Multiple decimal separators in pattern "' +
-                      pattern + '"');
+              pattern + '"');
         }
         decimalPos = digitLeftCount + zeroDigitCount + digitRightCount;
         break;
       case goog.i18n.NumberFormat.PATTERN_EXPONENT_:
         if (this.useExponentialNotation_) {
           throw Error('Multiple exponential symbols in pattern "' +
-                      pattern + '"');
+              pattern + '"');
         }
         this.useExponentialNotation_ = true;
         this.minExponentDigits_ = 0;
@@ -1013,7 +1097,7 @@ goog.i18n.NumberFormat.prototype.parseTrunk_ = function(pattern, pos) {
         // Use lookahead to parse out the exponential part
         // of the pattern, then jump into phase 2.
         while ((pos[0] + 1) < len && pattern.charAt(pos[0] + 1) ==
-               goog.i18n.NumberFormat.PATTERN_ZERO_DIGIT_) {
+            goog.i18n.NumberFormat.PATTERN_ZERO_DIGIT_) {
           pos[0]++;
           this.minExponentDigits_++;
         }
@@ -1045,7 +1129,7 @@ goog.i18n.NumberFormat.prototype.parseTrunk_ = function(pattern, pos) {
   // Do syntax checking on the digits.
   if (decimalPos < 0 && digitRightCount > 0 ||
       decimalPos >= 0 && (decimalPos < digitLeftCount ||
-                          decimalPos > digitLeftCount + zeroDigitCount) ||
+      decimalPos > digitLeftCount + zeroDigitCount) ||
       groupingCount == 0) {
     throw Error('Malformed pattern "' + pattern + '"');
   }
@@ -1073,9 +1157,10 @@ goog.i18n.NumberFormat.prototype.parseTrunk_ = function(pattern, pos) {
     }
   }
 
-  this.groupingSize_ = Math.max(0, groupingCount);
+  // Add another number grouping at the end
+  this.groupingArray_[this.groupingArray_.length] = Math.max(0, groupingCount);
   this.decimalSeparatorAlwaysShown_ = decimalPos == 0 ||
-                                      decimalPos == totalDigits;
+      decimalPos == totalDigits;
 };
 
 
