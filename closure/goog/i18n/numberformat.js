@@ -86,8 +86,16 @@ goog.i18n.NumberFormat = function(pattern, opt_currency, opt_currencyStyle) {
   // The multiplier for use in percent, per mille, etc.
   /** @private {number} */
   this.multiplier_ = 1;
-  /** @private {Array} */
+
+  /**
+   * The grouping array is used to store the values of each number group
+   * following left of the decimal place. For example, a number group with
+   * goog.i18n.NumberFormat('#,##,###') should have [3,2] where 2 is the
+   * repeated number group following a fixed number grouping of size 3.
+   */
+  /** @private {!Array} */
   this.groupingArray_ = [];
+
   /** @private {boolean} */
   this.decimalSeparatorAlwaysShown_ = false;
   /** @private {boolean} */
@@ -261,7 +269,7 @@ goog.i18n.NumberFormat.prototype.setShowTrailingZeros =
 goog.i18n.NumberFormat.prototype.setBaseFormatting =
     function(baseFormattingNumber) {
   goog.asserts.assert(goog.isNull(baseFormattingNumber) ||
-          isFinite(baseFormattingNumber));
+      isFinite(baseFormattingNumber));
   this.baseFormattingNumber_ = baseFormattingNumber;
   return this;
 };
@@ -589,8 +597,8 @@ goog.i18n.NumberFormat.prototype.roundNumber_ = function(number) {
  *     This function will add its formatted pieces to the array.
  * @private
  */
-goog.i18n.NumberFormat.prototype.subformatFixed_ = function(
-    number, minIntDigits, parts) {
+goog.i18n.NumberFormat.prototype.subformatFixed_ =
+    function(number, minIntDigits, parts) {
   if (this.minimumFractionDigits_ > this.maximumFractionDigits_) {
     throw Error('Min value must be less than max value');
   }
@@ -662,28 +670,23 @@ goog.i18n.NumberFormat.prototype.subformatFixed_ = function(
             // a time; otherwise, if the remainder is 1, there's the separator
             if (currentGroupSize === 1 ||
                 (currentGroupSize > 0 &&
-                (repeatedDigitIndex % currentGroupSize) === 1)
-            ) {
+                (repeatedDigitIndex % currentGroupSize) === 1)) {
               parts.push(grouping);
             }
-          } else {
+          } else if (currentGroupSizeIndex < this.groupingArray_.length) {
             // Process the right side (the non-repeated fixed number groups)
-            if (currentGroupSizeIndex < this.groupingArray_.length) {
-              if (i === repeatedDigitLen) {
-                // Increase the group index because a separator
-                // has previously added in the earlier logic
-                currentGroupSizeIndex += 1;
-              } else {
-                // Otherwise, just iterate to the right side and
-                // add a separator once the length matches to the expected
-                if (currentGroupSize ===
-                    i - repeatedDigitLen - nonRepeatedGroupCompleteCount + 1) {
-                  parts.push(grouping);
-                  // Keep track of what has been completed on the right
-                  nonRepeatedGroupCompleteCount += currentGroupSize;
-                  currentGroupSizeIndex += 1; // Get to the next number grouping
-                }
-              }
+            if (i === repeatedDigitLen) {
+              // Increase the group index because a separator
+              // has previously added in the earlier logic
+              currentGroupSizeIndex += 1;
+            } else if (currentGroupSize ===
+                i - repeatedDigitLen - nonRepeatedGroupCompleteCount + 1) {
+              // Otherwise, just iterate to the right side and
+              // add a separator once the length matches to the expected
+              parts.push(grouping);
+              // Keep track of what has been completed on the right
+              nonRepeatedGroupCompleteCount += currentGroupSize;
+              currentGroupSizeIndex += 1; // Get to the next number grouping
             }
           }
         }
@@ -693,24 +696,19 @@ goog.i18n.NumberFormat.prototype.subformatFixed_ = function(
       var digitLenLeft = digitLen;
       var rightToLeftParts = [];
       // Start from the right most non-repeating group and work inwards
-      for (
-          currentGroupSizeIndex = this.groupingArray_.length - 1;
+      for (currentGroupSizeIndex = this.groupingArray_.length - 1;
           currentGroupSizeIndex >= 0 && digitLenLeft > 0;
           currentGroupSizeIndex--) {
         currentGroupSize = this.groupingArray_[currentGroupSizeIndex];
         // Iterate from the right most digit
         for (var rightDigitIndex = 0;
              rightDigitIndex < currentGroupSize && (
-             (digitLenLeft - rightDigitIndex - 1) >= 0
-             );
+             (digitLenLeft - rightDigitIndex - 1) >= 0);
              rightDigitIndex++) {
           rightToLeftParts.push(
               String.fromCharCode(
                   zeroCode + intPart.charAt(
-                      digitLenLeft - rightDigitIndex - 1
-                  ) * 1
-              )
-          );
+                      digitLenLeft - rightDigitIndex - 1) * 1));
         }
         // Update the number of digits left
         digitLenLeft -= currentGroupSize;
