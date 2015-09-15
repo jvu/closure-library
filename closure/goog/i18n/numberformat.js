@@ -586,6 +586,7 @@ goog.i18n.NumberFormat.prototype.roundNumber_ = function(number) {
   return {intValue: intValue, fracValue: fracValue};
 };
 
+
 /**
  * This function is called when the length of the repeating digits is at least
  * one digit. In the number grouping concept, anything left of the decimal
@@ -656,6 +657,7 @@ function formatNumberGroupingRepatingDigitsParts(parts, zeroCode,
   return parts;
 }
 
+
 /**
  * This function is called when the length of the digits is smaller than the
  * length of the repeating and non-repeating digits.
@@ -717,6 +719,7 @@ function formatNumberGroupingNonRepatingDigitsParts(parts, zeroCode,
 
   return parts;
 }
+
 
 /**
  * Formats a Number in fraction format.
