@@ -586,6 +586,137 @@ goog.i18n.NumberFormat.prototype.roundNumber_ = function(number) {
   return {intValue: intValue, fracValue: fracValue};
 };
 
+/**
+ * This function is called when the length of the repeating digits is at least
+ * one digit. In the number grouping concept, anything left of the decimal
+ * place is followed by non-repeating digits and then repeating digits. If the
+ * pattern is #,##,###, then we first (from the left of the decimal place) have
+ * a non-repeating digit of size 3 followed by repeating digits of size 2
+ * separated by a thousand separator. If the length of the digits are six or
+ * more, there be repeating digits required. For example, the value of 12345678
+ * would be formatted as 1,23,45,678 where the repeating digit is length 2.
+ *
+ * @param {Array<string>} parts The original parts variable that built in
+ *  goog.i18n.NumberFormat.prototype.subformatFixed_
+ * @param {number} zeroCode The original zeroCode variable from
+ *  goog.i18n.NumberFormat.prototype.subformatFixed_
+ * @param {string} intPart The original intPart variable from
+ *  goog.i18n.NumberFormat.prototype.subformatFixed_
+ * @param {Array<number>} groupingArray The array of numbers to determine the
+ *  grouping of repeated and non-repeated digits
+ * @param {number} repeatedDigitLen The length of the repeated digits left of
+ *  the non-repeating digits left of the decimal
+ * @return {Array<string>} Returns the resulting parts variable containing
+ *  how numbers are to be grouped and appear
+ * @private
+ */
+function formatNumberGroupingRepatingDigitsParts(parts, zeroCode,
+    intPart, groupingArray, repeatedDigitLen) {
+  var grouping = goog.i18n.NumberFormatSymbols.GROUP_SEP;
+  var digitLen = intPart.length;
+
+  // Keep track of how much has been completed on the non repeated groups
+  var nonRepeatedGroupCompleteCount = 0;
+  var currentGroupSizeIndex = 0;
+  var currentGroupSize = 0;
+
+  // There are repeating digits and non-repeating digits
+  for (var i = 0; i < digitLen; i++) {
+    parts.push(String.fromCharCode(zeroCode + intPart.charAt(i) * 1));
+    if (digitLen - i > 1) {
+      currentGroupSize = groupingArray[currentGroupSizeIndex];
+      if (i < repeatedDigitLen) {
+        // Process the left side (the repeated number groups)
+        var repeatedDigitIndex = repeatedDigitLen - i;
+        // Edge case if there's a number grouping asking for "1" group at
+        // a time; otherwise, if the remainder is 1, there's the separator
+        if (currentGroupSize === 1 ||
+            (currentGroupSize > 0 &&
+            (repeatedDigitIndex % currentGroupSize) === 1)) {
+          parts.push(grouping);
+        }
+      } else if (currentGroupSizeIndex < groupingArray.length) {
+        // Process the right side (the non-repeated fixed number groups)
+        if (i === repeatedDigitLen) {
+          // Increase the group index because a separator
+          // has previously added in the earlier logic
+          currentGroupSizeIndex += 1;
+        } else if (currentGroupSize ===
+            i - repeatedDigitLen - nonRepeatedGroupCompleteCount + 1) {
+          // Otherwise, just iterate to the right side and
+          // add a separator once the length matches to the expected
+          parts.push(grouping);
+          // Keep track of what has been completed on the right
+          nonRepeatedGroupCompleteCount += currentGroupSize;
+          currentGroupSizeIndex += 1; // Get to the next number grouping
+        }
+      }
+    }
+  }
+  return parts;
+}
+
+/**
+ * This function is called when the length of the digits is smaller than the
+ * length of the repeating and non-repeating digits.
+ * In the number grouping concept, anything left of the decimal
+ * place is followed by non-repeating digits and then repeating digits. If the
+ * pattern is #,##,###, then we first (from the left of the decimal place) have
+ * a non-repeating digit of size 3 followed by repeating digits of size 2
+ * separated by a thousand separator. If the length of the digits are five or
+ * less, there won't be any repeating digits required. For example, the value
+ * of 12345 would be formatted as 12,345 where the non-repeating digit is of
+ * length 3.
+ *
+ * @param {Array<string>} parts The original parts variable that built in
+ *  goog.i18n.NumberFormat.prototype.subformatFixed_
+ * @param {number} zeroCode The original zeroCode variable from
+ *  goog.i18n.NumberFormat.prototype.subformatFixed_
+ * @param {string} intPart The original intPart variable from
+ *  goog.i18n.NumberFormat.prototype.subformatFixed_
+ * @param {Array<number>} groupingArray The array of numbers to determine the
+ *  grouping of repeated and non-repeated digits
+ * @return {Array<string>} Returns the resulting parts variable containing
+ *  how numbers are to be grouped and appear
+ * @private
+ */
+function formatNumberGroupingNonRepatingDigitsParts(parts, zeroCode,
+    intPart, groupingArray) {
+  // Keep track of how much has been completed on the non repeated groups
+  var grouping = goog.i18n.NumberFormatSymbols.GROUP_SEP;
+  var currentGroupSizeIndex;
+  var currentGroupSize = 0;
+
+  var digitLenLeft = intPart.length;
+  var rightToLeftParts = [];
+  // Start from the right most non-repeating group and work inwards
+  for (currentGroupSizeIndex = groupingArray.length - 1;
+       currentGroupSizeIndex >= 0 && digitLenLeft > 0;
+       currentGroupSizeIndex--) {
+    currentGroupSize = groupingArray[currentGroupSizeIndex];
+    // Iterate from the right most digit
+    for (var rightDigitIndex = 0;
+         rightDigitIndex < currentGroupSize && (
+         (digitLenLeft - rightDigitIndex - 1) >= 0);
+         rightDigitIndex++) {
+      rightToLeftParts.push(
+          String.fromCharCode(
+              zeroCode + intPart.charAt(
+                  digitLenLeft - rightDigitIndex - 1) * 1));
+    }
+    // Update the number of digits left
+    digitLenLeft -= currentGroupSize;
+    if (digitLenLeft > 0) {
+      rightToLeftParts.push(grouping);
+    }
+  }
+  // Reverse and push onto the remaining parts
+  rightToLeftParts.reverse().forEach(function(item) {
+    parts.push(item);
+  });
+
+  return parts;
+}
 
 /**
  * Formats a Number in fraction format.
@@ -630,16 +761,11 @@ goog.i18n.NumberFormat.prototype.subformatFixed_ =
   intPart = translatableInt + intPart;
 
   var decimal = goog.i18n.NumberFormatSymbols.DECIMAL_SEP;
-  var grouping = goog.i18n.NumberFormatSymbols.GROUP_SEP;
   var zeroCode = goog.i18n.NumberFormat.enforceAsciiDigits_ ?
       48  /* ascii '0' */ :
       goog.i18n.NumberFormatSymbols.ZERO_DIGIT.charCodeAt(0);
   var digitLen = intPart.length;
   var nonRepeatedGroupCount = 0;
-  // Keep track of how much has been completed on the non repeated groups
-  var nonRepeatedGroupCompleteCount = 0;
-  var currentGroupSizeIndex = 0;
-  var currentGroupSize = 0;
 
   if (intValue > 0 || minIntDigits > 0) {
     for (var i = digitLen; i < minIntDigits; i++) {
@@ -659,67 +785,12 @@ goog.i18n.NumberFormat.prototype.subformatFixed_ =
     var repeatedDigitLen = digitLen - nonRepeatedGroupCount;
     if (repeatedDigitLen > 0) {
       // There are repeating digits and non-repeating digits
-      for (var i = 0; i < digitLen; i++) {
-        parts.push(String.fromCharCode(zeroCode + intPart.charAt(i) * 1));
-        if (digitLen - i > 1) {
-          currentGroupSize = this.groupingArray_[currentGroupSizeIndex];
-          if (i < repeatedDigitLen) {
-            // Process the left side (the repeated number groups)
-            var repeatedDigitIndex = repeatedDigitLen - i;
-            // Edge case if there's a number grouping asking for "1" group at
-            // a time; otherwise, if the remainder is 1, there's the separator
-            if (currentGroupSize === 1 ||
-                (currentGroupSize > 0 &&
-                (repeatedDigitIndex % currentGroupSize) === 1)) {
-              parts.push(grouping);
-            }
-          } else if (currentGroupSizeIndex < this.groupingArray_.length) {
-            // Process the right side (the non-repeated fixed number groups)
-            if (i === repeatedDigitLen) {
-              // Increase the group index because a separator
-              // has previously added in the earlier logic
-              currentGroupSizeIndex += 1;
-            } else if (currentGroupSize ===
-                i - repeatedDigitLen - nonRepeatedGroupCompleteCount + 1) {
-              // Otherwise, just iterate to the right side and
-              // add a separator once the length matches to the expected
-              parts.push(grouping);
-              // Keep track of what has been completed on the right
-              nonRepeatedGroupCompleteCount += currentGroupSize;
-              currentGroupSizeIndex += 1; // Get to the next number grouping
-            }
-          }
-        }
-      }
+      parts = formatNumberGroupingRepatingDigitsParts(parts,
+          zeroCode, intPart, this.groupingArray_, repeatedDigitLen);
     } else {
       // There are no repeating digits and only non-repeating digits
-      var digitLenLeft = digitLen;
-      var rightToLeftParts = [];
-      // Start from the right most non-repeating group and work inwards
-      for (currentGroupSizeIndex = this.groupingArray_.length - 1;
-          currentGroupSizeIndex >= 0 && digitLenLeft > 0;
-          currentGroupSizeIndex--) {
-        currentGroupSize = this.groupingArray_[currentGroupSizeIndex];
-        // Iterate from the right most digit
-        for (var rightDigitIndex = 0;
-             rightDigitIndex < currentGroupSize && (
-             (digitLenLeft - rightDigitIndex - 1) >= 0);
-             rightDigitIndex++) {
-          rightToLeftParts.push(
-              String.fromCharCode(
-                  zeroCode + intPart.charAt(
-                      digitLenLeft - rightDigitIndex - 1) * 1));
-        }
-        // Update the number of digits left
-        digitLenLeft -= currentGroupSize;
-        if (digitLenLeft > 0) {
-          rightToLeftParts.push(grouping);
-        }
-      }
-      // Reverse and push onto the remaining parts
-      rightToLeftParts.reverse().forEach(function(item) {
-        parts.push(item);
-      });
+      parts = formatNumberGroupingNonRepatingDigitsParts(parts,
+          zeroCode, intPart, this.groupingArray_);
     }
   } else if (!fractionPresent) {
     // If there is no fraction present, and we haven't printed any
